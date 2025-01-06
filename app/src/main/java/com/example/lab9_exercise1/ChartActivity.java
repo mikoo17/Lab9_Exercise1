@@ -45,6 +45,8 @@ public class ChartActivity extends Activity implements SensorEventListener {
 
     // Map to store the data for each sensor
     private Map<Sensor, List<Entry>> sensorDataMap = new HashMap<>();
+    private Map<Sensor, TextView> sensorTextViewMap = new HashMap<>();
+
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -82,6 +84,8 @@ public class ChartActivity extends Activity implements SensorEventListener {
                     sensorNameTextView.setTextSize(16f); // Adjust the text size if necessary
                     sensorNameTextView.setPadding(16, 8, 16, 0); // Add padding for better readability
 
+                    sensorTextViewMap.put(sensor, sensorNameTextView);
+
                     // Add the TextView and LineChart to the container
                     chartsContainer.addView(sensorNameTextView);
                     chartsContainer.addView(lineChart);
@@ -94,7 +98,7 @@ public class ChartActivity extends Activity implements SensorEventListener {
 
         // Register listeners for the sensors
         for (Sensor sensor : selectedSensors) {
-            sensorManager.registerListener(this, sensor, SensorManager.SENSOR_DELAY_UI);
+            sensorManager.registerListener(this, sensor, 300_000);
         }
 
         // Initialize MediaPlayer (if required)
@@ -112,64 +116,52 @@ public class ChartActivity extends Activity implements SensorEventListener {
     @Override
     public void onSensorChanged(SensorEvent event) {
         if (selectedSensors.contains(event.sensor)) {
-            float value = event.values[0]; // Get the sensor value
+            float value = event.values[0]; // Pobierz wartość czujnika
 
-            // Get the list of entries for the current sensor
+            // Dodaj nowy punkt danych do wykresu
             List<Entry> entriesForSensor = sensorDataMap.get(event.sensor);
-
-            // Add new data point for the current sensor
             if (entriesForSensor != null) {
                 entriesForSensor.add(new Entry(xIndex++, value));
             }
 
-            // Track if any sensor exceeds its threshold
-            boolean anySensorExceedsThreshold = false;
+            // Sprawdź, czy jakikolwiek sensor przekracza próg
+            // Tworzymy listę z wartościami true/false dla każdego sensora
+            List<Boolean> sensorThresholdStatus = new ArrayList<>();
 
-            // Iterate over all selected sensors to check if any exceeds the threshold
+            // Sprawdź, czy jakikolwiek sensor przekracza próg
             for (int i = 0; i < selectedSensors.size(); i++) {
                 Sensor sensor = selectedSensors.get(i);
-                float threshold = thresholds[i];
+                if (sensor.equals(event.sensor)) {
+                    float threshold = thresholds[i];
+                    boolean exceedsThreshold = value > threshold;
+                    sensorThresholdStatus.add(exceedsThreshold); // Dodaj wynik dla bieżącego sensora
 
-
-                if (event.sensor == sensor && value > threshold) {
-                    anySensorExceedsThreshold = true; // Mark if any sensor exceeds threshold
-
-
-                    // Change the color of the TextView for the corresponding sensor
-                    TextView sensorNameTextView = (TextView) chartsContainer.getChildAt(i * 2);
-
-                    sensorNameTextView.setTextColor(Color.RED); // Change color to red
-                } else {
-
-                    // Restore the color to black for sensors not exceeding the threshold
-                    TextView sensorNameTextView = (TextView) chartsContainer.getChildAt(i * 2);
-                    sensorNameTextView.setTextColor(Color.BLACK); // Restore color to default (black)
+                    // Zaktualizuj kolor nazwy sensora
+                    TextView sensorNameTextView = sensorTextViewMap.get(sensor);
+                    if (sensorNameTextView != null) {
+                        if (exceedsThreshold) {
+                            sensorNameTextView.setTextColor(Color.RED);
+                        } else {
+                            sensorNameTextView.setTextColor(Color.BLACK);
+                        }
+                    }
                 }
             }
 
-            // Trigger the alarm if any sensor exceeds its threshold
-            if (anySensorExceedsThreshold && !alarmTriggered) {
+            // Sprawdź, czy jakikolwiek sensor przekracza próg
+            boolean anySensorExceedsThreshold = sensorThresholdStatus.contains(true); // Sprawdzamy, czy któryś sensor przekroczył próg
 
-                triggerAlarm();
-                alarmTriggered = true; // Make sure the alarm is only triggered once
-            } else if (!anySensorExceedsThreshold && alarmTriggered) {
-
-                stopAlarm();
-                alarmTriggered = false; // Update the alarm status
+            // Zarządzaj alarmem na podstawie stanu sensora
+            if (anySensorExceedsThreshold) {
+                triggerAlarm(); // Uruchom alarm
+            } else {
+                stopAlarm(); // Zatrzymaj alarm
             }
 
-            // Save data to file
+            // Zapisz dane do pliku
             saveDataToFile(xIndex - 1, value);
         }
     }
-
-
-
-
-
-
-
-
 
     @Override
     public void onAccuracyChanged(Sensor sensor, int accuracy) {
@@ -194,21 +186,48 @@ public class ChartActivity extends Activity implements SensorEventListener {
 
     private void triggerAlarm() {
         if (mediaPlayer != null && !mediaPlayer.isPlaying()) {
-            mediaPlayer.start(); // Play alarm sound
+            try {
+                mediaPlayer.setOnCompletionListener(mp -> {
+                    Log.d("MediaPlayer", "Alarm sound playback completed.");
+                    if (alarmTriggered) {
+                        Log.d("MediaPlayer", "Restarting alarm sound.");
+                        mp.start(); // Odtwórz ponownie
+                    }
+                });
+                Log.d("MediaPlayer", "Starting MediaPlayer...");
+                mediaPlayer.start(); // Rozpocznij odtwarzanie
+                alarmTriggered = true; // Ustaw flagę, że alarm jest aktywny
+            } catch (Exception e) {
+                Log.e("MediaPlayer", "Error starting MediaPlayer: " + e.getMessage());
+                e.printStackTrace();
+            }
+        } else if (mediaPlayer != null && mediaPlayer.isPlaying()) {
+            Log.d("MediaPlayer", "MediaPlayer is already playing.");
+        } else {
+            Log.e("MediaPlayer", "MediaPlayer is null. Cannot start.");
         }
     }
 
+
+
     private void stopAlarm() {
         if (mediaPlayer != null && mediaPlayer.isPlaying()) {
-            mediaPlayer.stop(); // Stop the alarm sound
             try {
-                mediaPlayer.prepare(); // Re-prepare the MediaPlayer for the next use
+                Log.d("MediaPlayer", "Stopping MediaPlayer...");
+                mediaPlayer.stop(); // Zatrzymaj odtwarzanie
+                mediaPlayer.prepare(); // Przygotuj MediaPlayer do ponownego użycia
+                Log.d("MediaPlayer", "MediaPlayer successfully stopped and prepared.");
             } catch (Exception e) {
+                Log.e("MediaPlayer", "Error stopping MediaPlayer: " + e.getMessage());
                 e.printStackTrace();
             }
-            alarmTriggered = false;
+        } else {
+            Log.d("MediaPlayer", "MediaPlayer is not playing or is null.");
         }
+        alarmTriggered = false; // Ustaw flagę, że alarm nie jest aktywny
     }
+
+
 
     private void saveDataToFile(int x, float value) {
         try (FileOutputStream fos = openFileOutput("sensor_data_" + System.currentTimeMillis() + ".txt", MODE_APPEND);
