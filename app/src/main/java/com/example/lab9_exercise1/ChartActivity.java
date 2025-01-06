@@ -116,7 +116,7 @@ public class ChartActivity extends Activity implements SensorEventListener {
     @Override
     public void onSensorChanged(SensorEvent event) {
         if (selectedSensors.contains(event.sensor)) {
-            float value = event.values[0]; // Pobierz wartość czujnika
+            float value = event.values[0]; // Pobierz wartość czujnika comm
 
             // Dodaj nowy punkt danych do wykresu
             List<Entry> entriesForSensor = sensorDataMap.get(event.sensor);
