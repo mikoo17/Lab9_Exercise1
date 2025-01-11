@@ -32,18 +32,19 @@ import java.util.Timer;
 import java.util.TimerTask;
 
 public class ChartActivity extends Activity implements SensorEventListener {
+
     private SensorManager sensorManager;
     private List<Sensor> selectedSensors = new ArrayList<>();
-    private int[] intervals; // Array of intervals for each sensor
-    private float[] thresholds; // Array of thresholds for each sensor
+    private int[] intervals;
+    private float[] thresholds;
     private Timer timer = new Timer();
     private int xIndex = 0;
     private MediaPlayer mediaPlayer;
     private boolean alarmTriggered = false;
 
-    private LinearLayout chartsContainer;  // To hold dynamically created charts
+    private LinearLayout chartsContainer;
 
-    // Map to store the data for each sensor
+    private Map<Sensor, Long> lastUpdateTimeMap = new HashMap<>();
     private Map<Sensor, List<Entry>> sensorDataMap = new HashMap<>();
     private Map<Sensor, TextView> sensorTextViewMap = new HashMap<>();
 
@@ -53,14 +54,14 @@ public class ChartActivity extends Activity implements SensorEventListener {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_chart);
 
-        chartsContainer = findViewById(R.id.chartsContainer); // Get the container
+        chartsContainer = findViewById(R.id.chartsContainer);
 
         sensorManager = (SensorManager) getSystemService(SENSOR_SERVICE);
 
-        // Retrieve selected sensors, intervals, and thresholds from Intent
+
         List<Integer> sensorTypes = getIntent().getIntegerArrayListExtra("sensorTypes");
-        intervals = getIntent().getIntArrayExtra("intervals"); // Retrieve array of intervals
-        thresholds = getIntent().getFloatArrayExtra("thresholds"); // Retrieve array of thresholds
+        intervals = getIntent().getIntArrayExtra("intervals");
+        thresholds = getIntent().getFloatArrayExtra("thresholds");
 
         if (sensorTypes != null && intervals != null && thresholds != null) {
             for (int i = 0; i < sensorTypes.size(); i++) {
@@ -68,119 +69,112 @@ public class ChartActivity extends Activity implements SensorEventListener {
                 Sensor sensor = sensorManager.getDefaultSensor(sensorType);
                 if (sensor != null) {
                     selectedSensors.add(sensor);
-                    // Create a new list of entries for this sensor
+
                     sensorDataMap.put(sensor, new ArrayList<>());
 
-                    // Dynamically create LineChart views for each selected sensor
+
                     LineChart lineChart = new LineChart(this);
                     lineChart.setLayoutParams(new LinearLayout.LayoutParams(
                             LinearLayout.LayoutParams.MATCH_PARENT,
-                            500 // Set chart height dynamically
+                            500
                     ));
 
-                    // Create a TextView to show the sensor name
                     TextView sensorNameTextView = new TextView(this);
                     sensorNameTextView.setText(sensor.getName());
-                    sensorNameTextView.setTextSize(16f); // Adjust the text size if necessary
-                    sensorNameTextView.setPadding(16, 8, 16, 0); // Add padding for better readability
+                    sensorNameTextView.setTextSize(16f);
+                    sensorNameTextView.setPadding(16, 8, 16, 0);
 
                     sensorTextViewMap.put(sensor, sensorNameTextView);
 
-                    // Add the TextView and LineChart to the container
+
                     chartsContainer.addView(sensorNameTextView);
                     chartsContainer.addView(lineChart);
 
-                    // Initialize chart settings for each sensor
                     setupChart(lineChart);
                 }
             }
         }
 
-        // Register listeners for the sensors
         for (Sensor sensor : selectedSensors) {
-            sensorManager.registerListener(this, sensor, 300_000);
+            sensorManager.registerListener(this, sensor, SensorManager.SENSOR_DELAY_FASTEST);
         }
 
-        // Initialize MediaPlayer (if required)
         mediaPlayer = MediaPlayer.create(this, R.raw.alarm_sound); // Replace with your alarm sound resource
 
-        // Timer to update charts periodically
         timer.schedule(new TimerTask() {
             @Override
             public void run() {
                 runOnUiThread(() -> updateCharts());
             }
-        }, 0, 2000); // Default 1000ms, will be overridden later by specific sensor intervals
+        }, 0, 100);
     }
 
     @Override
     public void onSensorChanged(SensorEvent event) {
-        if (selectedSensors.contains(event.sensor)) {
-            float value = event.values[0]; // Pobierz wartość czujnika comm
+        Sensor sensor = event.sensor;
 
-            // Dodaj nowy punkt danych do wykresu
-            List<Entry> entriesForSensor = sensorDataMap.get(event.sensor);
-            if (entriesForSensor != null) {
-                entriesForSensor.add(new Entry(xIndex++, value));
-            }
+        if (selectedSensors.contains(sensor)) {
 
-            // Sprawdź, czy jakikolwiek sensor przekracza próg
-            // Tworzymy listę z wartościami true/false dla każdego sensora
-            List<Boolean> sensorThresholdStatus = new ArrayList<>();
+            long currentTime = System.currentTimeMillis();
 
-            // Sprawdź, czy jakikolwiek sensor przekracza próg
-            for (int i = 0; i < selectedSensors.size(); i++) {
-                Sensor sensor = selectedSensors.get(i);
-                if (sensor.equals(event.sensor)) {
-                    float threshold = thresholds[i];
-                    boolean exceedsThreshold = value > threshold;
-                    sensorThresholdStatus.add(exceedsThreshold); // Dodaj wynik dla bieżącego sensora
 
-                    // Zaktualizuj kolor nazwy sensora
-                    TextView sensorNameTextView = sensorTextViewMap.get(sensor);
-                    if (sensorNameTextView != null) {
-                        if (exceedsThreshold) {
-                            sensorNameTextView.setTextColor(Color.RED);
-                        } else {
-                            sensorNameTextView.setTextColor(Color.BLACK);
-                        }
-                    }
+            int sensorIndex = selectedSensors.indexOf(sensor);
+            int interval = intervals[sensorIndex]; // interwał w milisekundach
+
+
+            long lastUpdateTime = lastUpdateTimeMap.getOrDefault(sensor, 0L);
+
+            if (currentTime - lastUpdateTime >= interval) {
+
+                lastUpdateTimeMap.put(sensor, currentTime);
+
+
+                float value = event.values[0];
+                // Zapis danych do pliku
+                saveDataToFile(sensor.getName(), currentTime, value);
+                List<Entry> entriesForSensor = sensorDataMap.get(sensor);
+                if (entriesForSensor != null) {
+                    entriesForSensor.add(new Entry(xIndex++, value));
                 }
+
+
+                float threshold = thresholds[sensorIndex];
+                boolean exceedsThreshold = value > threshold;
+
+
+                TextView sensorNameTextView = sensorTextViewMap.get(sensor);
+                if (sensorNameTextView != null) {
+                    sensorNameTextView.setTextColor(exceedsThreshold ? Color.RED : Color.BLACK);
+                }
+
             }
-
-            // Sprawdź, czy jakikolwiek sensor przekracza próg
-            boolean anySensorExceedsThreshold = sensorThresholdStatus.contains(true); // Sprawdzamy, czy któryś sensor przekroczył próg
-
-            // Zarządzaj alarmem na podstawie stanu sensora
-            if (anySensorExceedsThreshold) {
-                triggerAlarm(); // Uruchom alarm
-            } else {
-                stopAlarm(); // Zatrzymaj alarm
-            }
-
-            // Zapisz dane do pliku
-            saveDataToFile(xIndex - 1, value);
         }
     }
 
     @Override
     public void onAccuracyChanged(Sensor sensor, int accuracy) {
-        // Handle accuracy change (if necessary)
+
     }
 
     private void updateCharts() {
-        // Update each chart with data from the corresponding sensor
+
         for (int i = 0; i < selectedSensors.size(); i++) {
             Sensor sensor = selectedSensors.get(i);
             LineChart lineChart = (LineChart) chartsContainer.getChildAt(i * 2 + 1); // Access chart
             TextView sensorNameTextView = (TextView) chartsContainer.getChildAt(i * 2); // Access sensor name TextView
 
-            // Get the data for the current sensor
+
             List<Entry> entriesForSensor = sensorDataMap.get(sensor);
-            LineDataSet dataSet = new LineDataSet(entriesForSensor, sensor.getName() + " Data"); // Use sensor name for label
+
+
+            if (entriesForSensor != null && !entriesForSensor.isEmpty()) {
+                Entry lastEntry = entriesForSensor.get(entriesForSensor.size() - 1); // Ostatni punkt
+                entriesForSensor.add(new Entry(xIndex++, lastEntry.getY())); // Dodaj punkt z tą samą wartością
+            }
+            LineDataSet dataSet = new LineDataSet(entriesForSensor, sensor.getName() + " Data");
             LineData lineData = new LineData(dataSet);
             lineChart.setData(lineData);
-            lineChart.invalidate(); // Refresh the chart
+            lineChart.invalidate();
         }
     }
 
@@ -191,7 +185,7 @@ public class ChartActivity extends Activity implements SensorEventListener {
                     Log.d("MediaPlayer", "Alarm sound playback completed.");
                     if (alarmTriggered) {
                         Log.d("MediaPlayer", "Restarting alarm sound.");
-                        mp.start(); // Odtwórz ponownie
+                        mp.start();
                     }
                 });
                 Log.d("MediaPlayer", "Starting MediaPlayer...");
@@ -229,29 +223,34 @@ public class ChartActivity extends Activity implements SensorEventListener {
 
 
 
-    private void saveDataToFile(int x, float value) {
-        try (FileOutputStream fos = openFileOutput("sensor_data_" + System.currentTimeMillis() + ".txt", MODE_APPEND);
+    private void saveDataToFile(String sensorName, long timestamp, float value) {
+        String fileName = "sensor_data.txt"; // Nazwa pliku (w wewnętrznej pamięci)
+        String dataLine = String.format("%s,%d,%.2f\n", sensorName, timestamp, value);
+
+        try (FileOutputStream fos = openFileOutput(fileName, MODE_APPEND);
              OutputStreamWriter writer = new OutputStreamWriter(fos)) {
-            writer.write(String.format("Time: %d, Value: %.2f\n", x, value));
+            writer.write(dataLine);
+            Log.d("SaveData", "Data saved: " + dataLine);
         } catch (Exception e) {
-            e.printStackTrace();
+            Log.e("SaveData", "Error saving data: " + e.getMessage());
         }
     }
 
+
     private void setupChart(LineChart lineChart) {
-        // Set up the chart properties
+
         XAxis xAxis = lineChart.getXAxis();
-        xAxis.setGranularity(1f); // Only show integer values
+        xAxis.setGranularity(1f);
         xAxis.setPosition(XAxis.XAxisPosition.BOTTOM);
 
         YAxis leftAxis = lineChart.getAxisLeft();
-        leftAxis.setAxisMinimum(0f); // Set min value for Y-axis
+        leftAxis.setAxisMinimum(0f);
 
         YAxis rightAxis = lineChart.getAxisRight();
-        rightAxis.setEnabled(false); // Disable right axis
+        rightAxis.setEnabled(false);
 
-        lineChart.getDescription().setEnabled(false); // Disable description
-        lineChart.setDrawGridBackground(false); // Disable grid background
+        lineChart.getDescription().setEnabled(false);
+        lineChart.setDrawGridBackground(false);
     }
 
     @Override
